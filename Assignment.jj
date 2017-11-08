@@ -1,0 +1,826 @@
+/**
+ *
+ *DISCLAIMER: Compiling this file using: javacc Assignment.jj , may result in 4 warnings about choice
+ *  conflicts in methods MainExpression, FunExpression, MainTerm and Funterm. Rest assured that these
+ *  raised concerns are already being handled by raising exceptions in the warning cases. The warnings
+ *  relate to the possibility of the empty string being matched, case in which ParseExceptions are
+ *  raised.
+ *
+ *
+*/
+options {
+    STATIC = false ;
+}
+
+PARSER_BEGIN(Assignment)
+    import java.io.PrintStream ;
+    import java.util.Hashtable ;
+    import java.util.LinkedList ;
+    import java.util.regex.Pattern ;
+    import java.util.Set ;
+
+    class Assignment {
+        // stores function bodies associated with each function name
+        private Hashtable<String, Function> functions = new Hashtable<String, Function>(101);
+        // used for debugginf purposes to count encountered function declarations
+        private int decCount = 0;
+        // set true whenever a function call is made to a function which is already being calculated
+        private boolean divergence = false;
+        // set true once the MAIN function has been declared
+        private boolean main = false;       
+        public static void main( String[] args ) throws ParseException, TokenMgrError, NumberFormatException {
+            Assignment parser = new Assignment( System.in ) ;
+            try {
+                parser.Start( System.out ) ;
+            } catch (ParseException e) {
+                System.err.println("Incorect PLM code: " + e);
+                System.out.println("FAIL");
+            } catch (TokenMgrError e) {
+                System.err.println(new TokenMgrError(e.getMessage() + ". PLM specification states "
+                + "that only letters from the english alphabet, numbers, whitespaces, new line characters, "
+                + "'(' and ')', '{' and '}', '+' and '*' are allowed in PLM programs", 0));
+                System.out.println("FAIL");
+            } catch (Exception e) {
+                System.err.println("An unexpected exception was thrown: " + e);
+            }
+        }
+    }
+
+    /**
+     * The Function class stores function bodies for fast retrieval from the 'functions' table.
+     *
+     */
+    class Function {
+        String name;    // the stored name of the function
+        Expression e;   // an object containing data which represents the body of the function, for later execution
+        boolean running;    // used to determine if a function is running at any point during execution
+        boolean declared;   // used to determine if a function has been declared to check if calling it is vallid
+
+        public Function(String name, boolean declared) {
+            this.name = name;
+            this.running = false;
+            this.declared = declared;
+        }
+        public Function(String name, Expression e) {
+            this.name = name;
+            this.e = e;
+            this.running = false;
+            this.declared = true;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        void setExpression(Expression e) {
+            this.e = e;
+            declared = true;
+        }
+        void setName(String name) {
+            this.name = name;
+        }
+
+        public int run(int param, Hashtable<String, Function> functions) {
+            // if a running PLM function is run, this means that at some point in the execution
+            // of the running function, it was called again; this is not allowed according to
+            // the assignment specification
+            if(running || !declared) return -1;
+
+            this.running = true;
+            int result = e.evaluate(param, functions);
+            this.running = false;
+            return result;
+        }
+
+        public String toString() {
+            return name + " { " + e.toString() + " } ;";
+        }
+
+        // used to determine if a called function has been declared in the file
+        public boolean isDeclared() {
+            return declared;
+        }
+    }
+
+    /**
+     * The Expression object contains a list of Term objects whose values are added to obtain
+     * the value of the expression.
+     */
+    class Expression {
+        LinkedList<Term> terms; // term objects to be evaluated
+
+        public Expression() {
+            terms = new LinkedList<Term>();
+        }
+
+        // any discrepancies encountered will cause 'added' to be set to -1, flagging an error
+        public int evaluate(int param, Hashtable<String, Function> functions) {
+            int value = 0;
+            int added;
+            for (int i = 0; i < terms.size(); i++) {
+                added = terms.get(i).evaluate(param, functions);
+                if(added == -1) return -1;
+                value += added;
+            }
+            return value;
+        }
+
+        public void add(Term term) {
+            terms.add(term);
+        }
+
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            if(terms.size() > 0) {
+                sb.append( terms.get(0).toString() );
+            } else {
+                return "EMPTY EXPRESSION";
+            }
+
+            for (int i = 1; i < terms.size(); i++) {
+                sb.append("+");
+                sb.append( terms.get(i).toString() );
+            }
+            return sb.toString();
+        }
+    }
+
+    /**
+     * The Term object contains a list of factors to be multiplied in order to obtain the value
+     * of the term.
+     */
+    class Term {
+        LinkedList<Factor> factors; // factors to be evaluated
+
+        public Term() {
+            factors = new LinkedList<Factor>();
+        }
+
+        // any discrepancies encountered will cause 'multiplied' to be set to -1, flagging an error
+        public int evaluate(int param, Hashtable<String, Function> functions) {
+            int value = 1;
+            int multiplied;
+            for (int i = 0; i < factors.size(); i++) {
+                multiplied = factors.get(i).evaluate(param, functions);
+                if(multiplied == -1) return -1;
+                value *= multiplied;
+            }
+            return value;
+        }
+
+        public void add(Factor f) {
+            factors.add(f);
+        }
+
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            if(factors.size() > 0) {
+                sb.append( factors.get(0).toString() );
+            } else {
+                return "EMPTY TERM";
+            }
+
+            for(int i = 1; i < factors.size(); i++) {
+                sb.append("*");
+                sb.append( factors.get(0).toString() );
+            }
+            return sb.toString();
+        }
+    }
+
+    /**
+     * The Factor interface ensures that any number of the 3 different 
+     * types of factors can be stored in the same Term object.
+     */
+    interface Factor {
+        public int evaluate(int param, Hashtable<String, Function> functions) ;
+        public String toString() ;
+    }
+
+    class Number implements Factor {
+        int value;
+
+        public Number(int value) {
+            this.value = value;
+        }
+
+        public int evaluate(int param, Hashtable<String, Function> functions) {
+            return value;
+        }
+
+        public String toString() {
+            return "" + value;
+        }
+    }
+
+    class Param implements Factor {
+
+        public int evaluate(int param, Hashtable<String, Function> functions) {
+            return param;
+        }
+
+        public String toString() {
+            return "x";
+        }
+    }
+
+    /**
+     * The FunctionCall object stores the name of a function being called in an arithmetic expression in
+     * some function body. The value of the object is obtained by calling the named function from the
+     * 'functions' table with the value of 'e' as the passed parameter
+     */
+    class FunctionCall implements Factor {
+        String name;    // name of the function being called
+        Expression e;   // expression contained as argument; the value is passed to the function being called
+
+        public FunctionCall(String name) {
+            this.name = name;
+        }
+        public FunctionCall(String name, Expression e) {
+            this.name = name;
+            this.e = e;
+        }
+
+        void setExpression(Expression e) {
+            this.e = e;
+        }
+
+        public int evaluate(int param, Hashtable<String, Function> functions) {
+            int arg;
+            arg = e.evaluate(param, functions);
+            return functions.get(name).run(arg, functions);
+        }
+
+        public String toString() {
+            return name + "(" + e.toString() + ")";
+        }
+    }
+
+PARSER_END(Assignment)
+
+// Only used to process function calls encountered in Main. Therefore, does not 
+// accept the presence of parameters (any lower case letters)
+FunctionCall Call(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    String name;
+    Expression e;   // will store the expression within the function call brackets for later evaluation
+}
+{
+    t = <FUNNAME>
+    {
+        name = t.image;
+        if(!functions.containsKey(name)) {
+            // the function has not been declared yet so might not be declared at all
+            Function f = new Function(name, false); 
+            functions.put(name, f);
+        }
+    }
+
+    (<LBRACE>
+    |
+    {
+        throw new ParseException("Encountered wrong function call to function '" + name + "' within body of function '"
+        + "MAIN'. Expected \"(\" after function name. As per rule 7. in PLM specification, function calls are "
+        + "made by mentioning the relevant function name along with an argument enclosed in a pair of parentheses. "
+        + "Additionally, no whitespace can occur between the parentheses. Line " + t.beginLine);
+    })
+
+    e = MainExpression(printStream)
+
+    (<RBRACE>
+    |
+    {
+        throw new ParseException("Encountered wrong function call to function '" + name + "' within body of function '"
+        + "MAIN'. Expected \")\" after expression '" + e.toString() + "'. As per rule 7. in PLM specification, function calls are "
+        + "made by mentioning the relevant function name along with an argument enclosed in a pair of parentheses. "
+        + "Additionally, no whitespace can occur between the parentheses. Line " + t.beginLine);
+    })
+
+    {
+        return new FunctionCall(name, e);
+    }
+}
+
+// Used to process all function calls found within the bodies of functions except MAIN
+FunctionCall FunCall(PrintStream printStream, Token p, String superName) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    String name;
+    Expression e;   // will store the expression within the function call brackets for later evaluation
+}
+{
+    t = <FUNNAME>
+    {
+        name = t.image;
+        if(!functions.containsKey(name)) {
+            // the function has not been declared yet so might not be declared at all
+            Function f = new Function(name, false);
+            functions.put(name, f);
+        }
+    }
+
+    (<LBRACE>
+    |
+    {
+        throw new ParseException("Encountered wrong function call to function '" + name + "' within body of function '"
+        + superName + "'. Expected \"(\" after function name. As per rule 7. in PLM specification, function calls are "
+        + "made by mentioning the relevant function name along with an argument enclosed in a pair of parentheses. "
+        + "Additionally, no whitespace can occur between the parentheses. Line " + t.beginLine);
+    })
+
+    e = FunExpression(printStream, p, superName)
+
+    (<RBRACE>
+    |
+    {
+        throw new ParseException("Encountered wrong function call to function '" + name + "' within body of function '"
+        + superName + "'. Expected \")\" after expression '" + e.toString() + "'. As per rule 7. in PLM specification, function calls are "
+        + "made by mentioning the relevant function name along with an argument enclosed in a pair of parentheses. "
+        + "Additionally, no whitespace can occur between the parentheses. Line " + t.beginLine);
+    })
+
+    {
+        return new FunctionCall(name, e);
+    }
+}
+
+// Only used to evaluate expressions (the function body or function call arguments) within MAIN
+// Therefore, does not accept the presence of parameters (any lower case letters)
+Expression MainExpression(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Expression e = new Expression();
+    Term term;
+}
+{
+    term = MainTerm(printStream)
+    {
+        e.add(term);
+    }
+    (
+        <PLUS>
+        term = MainTerm(printStream)
+        {
+            e.add(term);
+        }
+    )*
+    { return e; }
+}
+
+// Used to evaluate expressions (the function body or function call arguments) within any function except MAIN
+Expression FunExpression(PrintStream printStream, Token p, String name) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Expression e = new Expression();
+    Term term;
+}
+{
+    term = FunTerm(printStream, p, name)
+    {
+        e.add(term);
+    }
+    (
+        <PLUS>
+        term = FunTerm(printStream, p, name)
+        {
+            e.add(term);
+        }
+    )*
+    { return e; }
+}
+
+// Used to evaluate terms (a+b means a and b are terms) within the body the MAIN function
+Term MainTerm(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    Term term = new Term();
+    FunctionCall f;
+}
+{
+    (
+        t = <NUMBER>
+        {
+            term.add( new Number( Integer.parseInt( t.image ) ) );
+        }
+        | f = Call(printStream)
+        {
+            term.add(f);
+        }
+        |
+        {
+            throw new ParseException("An invalid sequence of characters was found within 'MAIN' function body. "
+            + "As per rule 5. in PLM specification, the  function body is an arithmetic expression built from natural "
+            + "numbers, the associated parameter name (none for MAIN) as well as function calls");
+        }
+    )
+    (
+        <TIMES>
+        (
+            t = <NUMBER>
+            {
+                term.add( new Number( Integer.parseInt( t.image ) ) );
+            }
+            | f = Call(printStream)
+            {
+                term.add(f);
+            }
+            |
+            {
+                throw new ParseException("An invalid sequence of characters was found within 'MAIN' function body. "
+                + "As per rule 5. in PLM specification, the  function body is an arithmetic expression built from natural "
+                + "numbers, the associated parameter name (none for MAIN) as well as function calls");
+            }
+        )
+    )*
+    { return term; }
+}
+
+// Used to evaluate terms (a+b means a and b are terms) within the body of any function except MAIN
+Term FunTerm(PrintStream printStream, Token p, String name) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    Term term = new Term();
+    FunctionCall f;
+}
+{
+    (
+        t = <NUMBER>
+        {
+            term.add( new Number( Integer.parseInt(t.image) ) );
+        }
+        | t = <PARAM>
+        {
+            if( ! t.image.equals(p.image) ) throw new ParseException("Encountered '" + t.image + "' within '" + name
+            + "' function body. As per rule 5. in PLM specification, the  function body is an arithmetic expression built "
+            + "from natural numbers, the associated parameter name as well as function calls. The associated parameter in "
+            + "this case is '" + p.image + ". Line " + t.beginLine + ". Column " + t.beginColumn);
+            term.add( new Param() );
+        }
+        | f = FunCall(printStream, p, name)
+        {
+            term.add(f);
+        }
+        |
+        {
+            throw new ParseException("An invalid sequence of characters was found within '" + name + "' function body. "
+            + "As per rule 5. in PLM specification, the  function body is an arithmetic expression built from natural "
+            + "numbers, the associated parameter name as well as function calls. The associated parameter in this case is '"
+            + p.image + ". Line " + p.beginLine);
+        }
+    )
+
+    (
+        <TIMES>
+        (
+            t = <NUMBER>
+            {
+                term.add( new Number( Integer.parseInt(t.image) ) );
+            }
+            | t = <PARAM>
+            {
+                if( t.image.equals(p.image) ) throw new ParseException("Encountered '" + t.image + "' within '" + name
+                    + "' function body. As per rule 5. in PLM specification, the  function body is an arithmetic expression built "
+                    + "from natural numbers, the associated parameter name as well as function calls. The associated parameter in "
+                    + "this case is '" + p.image + ". Line " + t.beginLine + ". Column " + t.beginColumn);
+                term.add(new Param() );
+            }
+            | f = FunCall(printStream, p, name)
+            {
+                term.add(f);
+            }
+            |
+            {
+                throw new ParseException("An invalid sequence of characters was found within '" + name + "' function body. "
+                + "As per rule 5. in PLM specification, the  function body is an arithmetic expression built from natural "
+                + "numbers, the associated parameter name as well as function calls. The associated parameter in this case is '"
+                + p.image + ". Line " + p.beginLine);
+            }
+        )
+    )*
+    { return term; }
+}
+
+// Used to evaluate the first two tokens of a function declaration (the DEF keyword and the White Space)
+// The DEF keyword is identified as a function name token and then compared to a "DEF" string to
+// allow functions to be have DEF as their function name
+void Dec(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    String kword = "DEF";
+}
+{
+    { decCount++; }
+    t = <FUNNAME>
+    {
+        if(!kword.equals( t.image )) throw new ParseException("Encountered " + t.image + " instead of 'DEF'. As per PLM "
+        + "function definition structure, all function definitions must begin with the 'DEF' keyword. Additionally, each"
+        + " line of PLM code must be a function definition. Line " + t.beginLine + ". Column " + t.beginColumn);
+    }
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered wrong function declaration. Expected whitespace after keyword 'DEF'. The "
+        + "correct function declaration structure is: DEF FUNCTIONNAME param { ... } ;<EOL>    or alternatively: DEF "
+        + "MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+    (MainDec(printStream) | FunDec(printStream))
+}
+
+// Used to evaluate a function delaration of any function except MAIN, starting with the function's name'
+// Will create a new Function object to be stored in the global Function table for later execution
+void FunDec(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    Function f;
+    Expression e;
+    String name;
+}
+{
+    (t = <FUNNAME>
+    {
+        name = t.image;
+    }
+    |
+    {
+        throw new ParseException("Encountered a wrong function name. This may be caused by incorrect function naming. "
+        + "As per rule 1. in PLM specification function names are non-empty strings of upper-case letters. This issue "
+        + "may also be caused by wrong function declaration structures. The correct structure is: DEF FUNCTIONNAME "
+        + "param { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL>");
+    })
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a white space after "
+        + "function name '" + name + "'. This issue may be caused by incorrect function naming. As per rule 1. "
+        + "in PLM specification, function names are non-empty strings of upper-case letters. This issue may "
+        + "also be caused by wrong function declaration structures. The correct structure is: DEF FUNCTIONNAME "
+        + "param { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (t = <PARAM>
+    |
+    {
+        throw new ParseException("Encountered a wrong parameter in function declaration of function '" + name + "'. "
+        + "This may be caused by incorrect parameter naming. As per rule 2. in PLM specification, parameter names are "
+        + "non-empty strings of lower-case letters. This issue may also be caused by unexpected white spaces between "
+        + "function name and parameter. The correct structure of a function declaration is: DEF FUNCTIONNAME param "
+        + "{ ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered wrong function declaration. Was expecting a white space after "
+        + "parameter '" + t.image + "' of function '" + name + "'. This issue may be caused by incorrect parameter naming"
+        + ". As per rule 2. in PLM specification, parameter names are non-empty strings of lower-case letters. The correct "
+        + "structure of a function declaration is: DEF FUNCTIONNAME param { ... } ;<EOL>  or alternatively: DEF MAIN "
+        + "{ ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<LBRACKET>
+    |
+    {
+        throw new ParseException("Encountered wrong function declaration. Was expecting a \"{\" after parameter "
+        + "declaration '" + t.image + "' at function '" + name + "'. This issue may be caused by unexpected white spaces "
+        + "between the parameter and bracket. The correct stricture of a function declaration is: DEF FUNCTIONNAME param "
+        + "{ ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a white space after \"{\" at "
+        + "function '" + name + "'. The correct stricture of a function declaration is: DEF FUNCTIONNAME param { ... } "
+        + ";<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    e = FunExpression(printStream, t, name)
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a white space after the "
+        + "function body '" + e.toString() + "' of function '" + name + "'. This may be due to incorrect terms used in "
+        + "the function body. As per rule 5., the fuction body must only contain unbracketed additions and "
+        + "multiplications between natural numbers, the function parameter (" + t.image + ") and function calls. This "
+        + "may also be caused by unexpected white spaces within the function body. As per rule 4. in PLM specification"
+        + ", no spaces are allowed within the function body. Line " + t.beginLine);
+    })
+
+    (<RBRACKET>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a closing bracket after white "
+        + "space in function '" + name + "'. This may be caused by unexpected white spaces between the function body and"
+        + " closing bracket. As per rule 4. in PLM specification, no spaces are allowed in the function body. The correct"
+        + " function declaration structure is: DEF FUNCTIONNAME param { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ..."
+        + " Line " + t.beginLine);
+    })
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function delcaration. Was expecting a white space after the closing"
+        + " bracket at function '" + name + "'. The correct function declaration structure is: DEF FUNCTIONNAME param "
+        + "{ ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line "
+        + t.beginLine);
+    })
+
+    (<SEMICOL>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a semicolon at end of "
+        + "declaration at function '" + name + "'. This may be caused by unexpected white spaces between the the "
+        + "closing bracket and semicolon. The correct function declaration structure is: DEF FUNCTIONNAME"
+        + " param { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<EOL>
+    |
+    {
+        throw new ParseException("Encountered wrong function declaration. Was expecting new line after declaration of "
+        + "function '" + name + "'. The final semicolon must be followed immediately by the end-of-line character for any"
+        + " PLM function declaration. The correct function declaration structure is: DEF FUNCTIONNAME param { ... } ;<EOL>"
+        + "  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    {
+        if(!functions.containsKey(name)) {
+            f = new Function(name, true);
+            f.setExpression(e);
+            functions.put(f.getName(), f);
+        } else if(functions.get(name).isDeclared()) {
+            throw new ParseException("Function '" + t.image + "' defined twice. As per rule 8. in PLM specification, no "
+            + "function can be defined twice. Line " + t.beginLine);
+        } else {
+            functions.get(name).setExpression(e);
+        }
+
+    }
+}
+
+// Used to evaluate a function delaration of the MAIN function, starting with the function's name'
+// Will create a new Function object to be stored in the global Function table for later execution
+void MainDec(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{
+    Token t;
+    Function f;
+    Expression e;
+}
+{
+    t = <MAINKWORD>
+    {
+        if(!functions.containsKey(t.image)) {
+            f = new Function(t.image, true);
+        } else {
+            throw new ParseException("Function '" + t.image + "' defined twice. As per rule 8. in PLM specification, no"
+            + "function can be defined twice. Line " + t.beginLine);
+        }
+    }
+
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a white space after "
+        + "function name 'MAIN'. This issue may be caused by incorrect function naming. As per rule 1. "
+        + "in PLM specification, function names are non-empty strings of upper-case letters. This issue may "
+        + "also be caused by wrong function declaration structures. The correct structure is: DEF FUNCTIONNAME "
+        + "param { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<LBRACKET>
+    |
+    {
+        throw new ParseException("Encountered wrong function declaration. Was expecting a \"{\" after function name "
+        + "at function 'MAIN'. This issue may be caused by unexpected white spaces between the function "
+        + "name and bracket. The correct stricture of a function declaration is: DEF FUNCTIONNAME param "
+        + "{ ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a white space after \"{\" at "
+        + "function 'MAIN'. The correct stricture of a function declaration is: DEF FUNCTIONNAME param { ... } "
+        + ";<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    e = MainExpression(printStream)
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a white space after the "
+        + "function body '" + e.toString() + "' of function 'MAIN'. This may be due to incorrect terms used in "
+        + "the function body. As per rule 5., the fuction body must only contain unbracketed additions and "
+        + "multiplications between natural numbers, the function parameter (none in MAIN) and function calls. This "
+        + "may also be caused by unexpected white spaces within the function body. As per rule 4. in PLM specification"
+        + ", no spaces are allowed within the function body. Line " + t.beginLine);
+    })
+
+    (<RBRACKET>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a closing bracket after white "
+        + "space in function 'MAIN'. This may be caused by unexpected white spaces between the function body and"
+        + " closing bracket. As per rule 4. in PLM specification, no spaces are allowed in the function body. The correct"
+        + " function declaration structure is: DEF FUNCTIONNAME param { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;"
+        + "<EOL> ... Line " + t.beginLine);
+    })
+
+    (<WSPACE>
+    |
+    {
+        throw new ParseException("Encountered a wrong function delcaration. Was expecting a white space after the closing"
+        + " bracket at function 'MAIN'. The correct function declaration structure is: DEF FUNCTIONNAME param "
+        + "{ ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line "
+        + t.beginLine);
+    })
+
+    (<SEMICOL>
+    |
+    {
+        throw new ParseException("Encountered a wrong function declaration. Was expecting a semicolon at end of "
+        + "declaration at function 'MAIN'. This may be caused by unexpected white spaces between the the "
+        + "closing bracket and semicolon. The correct function declaration structure is: DEF FUNCTIONNAME param "
+        + "{ ... } ;<EOL>  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    (<EOL>
+    |
+    {
+        throw new ParseException("Encountered wrong function declaration. Was expecting new line after declaration of "
+        + "function 'MAIN'. The final semicolon must be followed immediately by the end-of-line character for any"
+        + " PLM function declaration. The correct function declaration structure is: DEF FUNCTIONNAME param { ... } ;<EOL>"
+        + "  or alternatively: DEF MAIN { ... } ;<EOL> ... Line " + t.beginLine);
+    })
+
+    {
+        f.setExpression(e);
+        functions.put(f.getName(), f);
+        main = true;
+    }
+
+}
+
+// Used to evaluate the entire PLM code
+void Start(PrintStream printStream) throws ParseException, TokenMgrError, NumberFormatException:
+{}
+{
+    ((Dec(printStream))+
+    |
+    {
+        throw new ParseException("No function declarations were found. PLM specification states that a PLM program consists "
+        + "of several lines of code, each of which defines a single function. This may be caused by a wrong function "
+        + "declaration. The correct function declaration structure is: DEF FUNCTIONNAME param { ... } ;<EOL>     or "
+        + "alternatively: DEF MAIN { ... } ;<EOL>");
+    })
+
+    (<EOF>
+    |
+    {
+        throw new ParseException("Encountered unexpected characters. According to PLM specification, every Plm program "
+        + "consists of several lines of code, each of which defines a single function. The correct function declaration "
+        + "structure is: DEF FUNCTIONNAME param { ... } ;<EOL>     or alternatively: DEF MAIN { ... } ;<EOL>");
+    })
+    {
+        Set<String> keys = functions.keySet();
+        for(String key: keys) {
+            if(!functions.get(key).isDeclared()) {
+                throw new ParseException("Method '" + key + "' is called but never declared. As per rule 6. "
+                + "in PLM specification, Function calls have to refer to functions that have been defined as "
+                + "part of the same program");
+            }
+        }
+        if(main) {
+            printStream.println("PASS");
+        } else {
+            throw new ParseException("MAIN function not declared. As per rule 8. in PLM specification, all PLM "
+            + "programs must define a MAIN function");
+        }
+
+        int result = functions.get("MAIN").run(0, functions);
+        if(result == -1) {
+            printStream.println("DIVERGENCE");
+        } else {
+            printStream.println(result);
+        }
+    }
+}
+
+// there is no DEF keyword token since it would not allow the existance of a function named "DEF"
+// instead, the FUNNAME token is used and checked against the string "DEF"
+TOKEN: { < PLUS : "+" > }
+TOKEN: { < TIMES : "*" > }
+TOKEN: { < LBRACE : "(" > }
+TOKEN: { < RBRACE : ")" > }
+TOKEN: { < LBRACKET : "{" > }
+TOKEN: { < RBRACKET : "}" > }
+TOKEN: { < NUMBER : "0" | ["1"-"9"](["0"-"9"])* > }
+TOKEN: { < MAINKWORD : "MAIN" > }
+TOKEN: { < FUNNAME : (["A"-"Z"])+ > }
+TOKEN: { < WSPACE : " " > }
+TOKEN: { < PARAM : (["a"-"z"])+ > }
+TOKEN: { < EOL : "\n" | "\r" | "\r\n" > }
+TOKEN: { < SEMICOL : ";" > }
